@@ -296,9 +296,31 @@ async function post(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  const data = await response.json();
+  const rawText = await response.text();
+  const data = parseJsonSafely(rawText);
+  if (!response.ok) throw new Error(buildRequestError(url, response, rawText, data));
+  if (!data) throw new Error(buildRequestError(url, response, rawText, data));
   if (!response.ok || !data.ok) throw new Error(data.error || `请求失败: ${response.status}`);
   return data;
+}
+
+function parseJsonSafely(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function buildRequestError(url, response, rawText, data) {
+  if (data?.error) return data.error;
+  if (response.status === 404 && url.startsWith('/api/')) {
+    return `接口 ${url} 返回 404：当前站点很可能只上传了静态页面，未部署 Pages Functions 或 _worker.js`;
+  }
+  if (!rawText) return `接口 ${url} 返回空响应 (${response.status})`;
+  const summary = rawText.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `接口 ${url} 返回了非 JSON 响应 (${response.status})${summary ? `：${summary}` : ''}`;
 }
 
 function setRandomNames() {
