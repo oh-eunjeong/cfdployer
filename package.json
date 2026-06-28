@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "deploy": "wrangler pages deploy public --project-name deploy-panel",
+    "deploy": "wrangler deploy",
     "build:upload": "node scripts/build-upload.mjs",
     "pack:upload": "npm run build:upload && rm -f deploy-panel-upload.zip && cd dist-upload && zip -qr ../deploy-panel-upload.zip ."
   },

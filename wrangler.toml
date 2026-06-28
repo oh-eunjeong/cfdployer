@@ -1,3 +1,7 @@
 name = "deploy-panel"
+main = "functions/api/[[path]].js"
 compatibility_date = "2026-01-20"
-pages_build_output_dir = "public"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"

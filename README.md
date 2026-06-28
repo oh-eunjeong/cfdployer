@@ -9,7 +9,18 @@ npm install
 npm run deploy
 ```
 
-也可以把本仓库接到 Cloudflare Pages，构建输出目录填 `public`，无需构建命令。
+默认部署方式已切换为 Cloudflare Workers 静态资源模式：`wrangler deploy` 会同时上传 `functions/api/[[path]].js` 和 `public/`。
+
+GitHub / Cloudflare 自动构建如果存在自定义部署命令，请使用：
+
+```bash
+npx wrangler deploy
+```
+
+如果目标账号要自动发布，需要准备：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
 ## Cloudflare 本地上传
 
