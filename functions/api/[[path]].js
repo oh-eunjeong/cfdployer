@@ -1,7 +1,15 @@
+import { APP_JS, INDEX_HTML, STYLES_CSS } from '../static-assets.js';
+
 const 接口地址 = 'https://api.cloudflare.com/client/v4';
 const 兼容日期 = '2026-01-20';
 const 绑定名 = 'C';
 const 源码远程基础 = 'https://raw.githubusercontent.com/oh-eunjeong/cfnew/main';
+const 静态资源映射 = new Map([
+  ['/', { body: INDEX_HTML, type: 'text/html; charset=utf-8' }],
+  ['/index.html', { body: INDEX_HTML, type: 'text/html; charset=utf-8' }],
+  ['/app.js', { body: APP_JS, type: 'application/javascript; charset=utf-8' }],
+  ['/styles.css', { body: STYLES_CSS, type: 'text/css; charset=utf-8' }]
+]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -15,7 +23,8 @@ export default {
       };
       return request.method === 'POST' ? onRequestPost(context) : onRequest(context);
     }
-    if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
+    const 静态响应 = 返回静态资源(路径);
+    if (静态响应) return 静态响应;
     return new Response('Not Found', { status: 404 });
   }
 };
@@ -573,7 +582,7 @@ async function 调用原始接口(凭据, 路径, 选项 = {}) {
 function 构建认证头(凭据 = {}) {
   const key = String(凭据.key || '').trim();
   const email = String(凭据.email || '').trim();
-  if (key.startsWith('cfk_')) {
+  if (key.startsWith('cfat_') || key.startsWith('cfut_')) {
     return { Authorization: `Bearer ${key}` };
   }
   return {
@@ -637,6 +646,18 @@ function 返回JSON(状态码, 数据) {
   return new Response(JSON.stringify(数据), {
     status: 状态码,
     headers: { 'Content-Type': 'application/json; charset=utf-8' }
+  });
+}
+
+function 返回静态资源(路径) {
+  const 资源 = 静态资源映射.get(路径);
+  if (!资源) return null;
+  return new Response(资源.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 资源.type,
+      'Cache-Control': 'public, max-age=300'
+    }
   });
 }
 
