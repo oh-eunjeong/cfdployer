@@ -175,7 +175,7 @@ async function loadResources() {
 function getCredentials() {
   const email = $('email').value.trim();
   const key = $('key').value.trim();
-  if (!email || !key) throw new Error('请填写 Cloudflare 邮箱和 Global API Key');
+  if (!email || !key) throw new Error('请填写 Cloudflare 邮箱，以及 Global API Key 或 API Token');
   return { email, key };
 }
 

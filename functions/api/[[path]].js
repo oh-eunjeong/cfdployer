@@ -1,7 +1,7 @@
 const 接口地址 = 'https://api.cloudflare.com/client/v4';
 const 兼容日期 = '2026-01-20';
 const 绑定名 = 'C';
-const 源码远程基础 = 'https://raw.githubusercontent.com/byJoey/cfnew/main';
+const 源码远程基础 = 'https://raw.githubusercontent.com/oh-eunjeong/cfnew/main';
 
 export default {
   async fetch(request, env, ctx) {
@@ -564,11 +564,22 @@ async function 调用接口(凭据, 路径, 选项 = {}) {
 
 async function 调用原始接口(凭据, 路径, 选项 = {}) {
   const headers = {
-    'X-Auth-Email': 凭据.email,
-    'X-Auth-Key': 凭据.key,
+    ...构建认证头(凭据),
     ...(选项.headers || {})
   };
   return await 请求JSON(`${接口地址}${路径}`, headers, 选项);
+}
+
+function 构建认证头(凭据 = {}) {
+  const key = String(凭据.key || '').trim();
+  const email = String(凭据.email || '').trim();
+  if (key.startsWith('cfk_')) {
+    return { Authorization: `Bearer ${key}` };
+  }
+  return {
+    'X-Auth-Email': email,
+    'X-Auth-Key': key
+  };
 }
 
 async function 调用JWT接口(jwt, 路径, 选项 = {}) {
