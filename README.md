@@ -57,7 +57,7 @@ npm start
 - 更新部署只同步代码，不修改 UUID、KV、域名或项目配置
 - Worker 部署
 - Pages 部署
-- 部署时实时从 `oh-eunjeong/cfnew` 的 `main` 分支拉取明文源或混淆源
+- 部署时实时从 `oh-eunjeong/cfnew` 的 `main` 分支拉取部署用混淆源；`明文源吗` 仅保留在 `cfnew` 仓库内用于开发和生成产物
 - Worker 自定义域名或 Route 绑定
 - Pages 自定义域名绑定
 
