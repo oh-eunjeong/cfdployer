@@ -7,7 +7,8 @@
     "start": "node server.mjs",
     "deploy": "wrangler deploy",
     "build:upload": "node scripts/build-upload.mjs",
-    "pack:upload": "npm run build:upload && rm -f deploy-panel-upload.zip && cd dist-upload && zip -qr ../deploy-panel-upload.zip ."
+    "pack:upload": "npm run build:upload && rm -f deploy-panel-upload.zip && cd dist-upload && zip -qr ../deploy-panel-upload.zip .",
+    "regress:geo:pages": "node scripts/cf-regress-geo-pages.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.53.0"
