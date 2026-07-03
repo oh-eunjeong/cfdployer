@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { buildDeployResult, parseEmitJsonArg, writeDeployResult } from './lib/deploy-result.mjs';
 
 function pickEnv(name) {
   const v = process.env[name];
@@ -59,17 +60,72 @@ function slugify(input) {
     .replace(/^-|-$/g, '');
 }
 
-function parseKvNamespaceId(output) {
-  const combined = output || '';
-  const m = combined.match(/[0-9a-f]{32}/i);
-  if (!m) throw new Error(`Failed to parse KV namespace id from output:\n${combined}`);
-  return m[0].toLowerCase();
+async function fetchText(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 20000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const res = await fetch(url, {
+    ...options,
+    signal: controller.signal
+  });
+  clearTimeout(timeoutId);
+  const text = await res.text();
+  return {
+    status: res.status,
+    text,
+    contentType: res.headers.get('content-type') || ''
+  };
 }
 
-async function fetchText(url, options = {}) {
-  const res = await fetch(url, options);
+async function cfApi(path, options = {}) {
+  const method = options.method || 'GET';
+  const headers = {
+    Authorization: `Bearer ${apiToken}`,
+    ...options.headers
+  };
+  let body = options.body;
+  if (body && typeof body === 'object' && !(body instanceof Uint8Array) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(body);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 20000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    method,
+    headers,
+    body,
+    signal: controller.signal
+  });
+  clearTimeout(timeoutId);
   const text = await res.text();
-  return { status: res.status, text };
+  const contentType = res.headers.get('content-type') || '';
+  let data = text;
+  if (contentType.includes('application/json')) {
+    data = JSON.parse(text);
+    if (!res.ok || data.success === false) {
+      throw new Error(`Cloudflare API ${method} ${path} failed: ${JSON.stringify(data)}`);
+    }
+    return data.result;
+  }
+  if (!res.ok) {
+    throw new Error(`Cloudflare API ${method} ${path} failed: ${text}`);
+  }
+  return data;
+}
+
+function isNetworkishError(err) {
+  const msg = String(err?.message || '');
+  const causeMsg = String(err?.cause?.message || '');
+  const code = String(err?.code || err?.cause?.code || '').toLowerCase();
+  return /fetch failed/i.test(msg) ||
+    /connect timeout/i.test(msg) ||
+    /disconnected before secure tls/i.test(msg) ||
+    code === 'econnreset' ||
+    code === 'und_err_connect_timeout' ||
+    /epipe/i.test(msg) ||
+    /epipe/i.test(causeMsg);
 }
 
 async function retry(fn, { retries = 10, delayMs = 1500 } = {}) {
@@ -85,8 +141,23 @@ async function retry(fn, { retries = 10, delayMs = 1500 } = {}) {
   throw lastErr;
 }
 
-const args = new Set(process.argv.slice(2));
+async function cfApiWithRetry(path, options = {}) {
+  const retries = options.retries || 6;
+  const delayMs = options.delayMs || 1500;
+  return await retry(async () => {
+    try {
+      return await cfApi(path, options);
+    } catch (err) {
+      if (isNetworkishError(err)) throw err;
+      throw err;
+    }
+  }, { retries, delayMs });
+}
+
+const argv = process.argv.slice(2);
+const args = new Set(argv);
 const keep = args.has('--keep');
+const emitJsonPath = parseEmitJsonArg(argv);
 const accountId = requireEnv('CLOUDFLARE_ACCOUNT_ID');
 const apiToken = pickEnv('CLOUDFLARE_API_TOKEN') || pickEnv('CF_API_TOKEN');
 if (!apiToken) throw new Error('Missing env: CLOUDFLARE_API_TOKEN (or CF_API_TOKEN)');
@@ -101,8 +172,7 @@ const envForWrangler = {
   CLOUDFLARE_API_TOKEN: apiToken
 };
 
-const selfRoot = fileURLToPath(new URL('../..', import.meta.url));
-const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
+const repoRoot = fileURLToPath(new URL('..', new URL('..', import.meta.url)));
 const cfnewDir = join(repoRoot, 'cfnew');
 const encodedPath = join(cfnewDir, '少年你相信光吗');
 
@@ -117,24 +187,35 @@ process.stdout.write(`project=${project}\n`);
 process.stdout.write(`kvTitle=${kvTitle}\n`);
 process.stdout.write(`uuid=${uuid}\n`);
 
-await run('npx', ['-y', 'wrangler', 'pages', 'project', 'create', project, '--production-branch', 'main', '--compatibility-date', compatDate], {
-  cwd: selfRoot,
-  env: envForWrangler
+await cfApiWithRetry(`/accounts/${accountId}/pages/projects`, {
+  method: 'POST',
+  body: {
+    name: project,
+    production_branch: 'main'
+  }
 });
 
-const kvCreate = await run('npx', ['-y', 'wrangler', 'kv', 'namespace', 'create', kvTitle], {
-  cwd: selfRoot,
-  env: envForWrangler
+const kvCreate = await cfApiWithRetry(`/accounts/${accountId}/storage/kv/namespaces`, {
+  method: 'POST',
+  body: {
+    title: kvTitle
+  }
 });
-const kvId = parseKvNamespaceId((kvCreate.stdout || '') + (kvCreate.stderr || ''));
+const kvId = kvCreate.id.toLowerCase();
 
-await run('npx', ['-y', 'wrangler', 'kv', 'key', 'put', '--remote', '--namespace-id', kvId, 'c', '{}'], {
-  cwd: selfRoot,
-  env: envForWrangler
+await cfApiWithRetry(`/accounts/${accountId}/storage/kv/namespaces/${kvId}/values/c`, {
+  method: 'PUT',
+  headers: {
+    'Content-Type': 'text/plain;charset=UTF-8'
+  },
+  body: '{}'
 });
-await run('npx', ['-y', 'wrangler', 'kv', 'key', 'put', '--remote', '--namespace-id', kvId, 'c_ver', String(Date.now())], {
-  cwd: selfRoot,
-  env: envForWrangler
+await cfApiWithRetry(`/accounts/${accountId}/storage/kv/namespaces/${kvId}/values/c_ver`, {
+  method: 'PUT',
+  headers: {
+    'Content-Type': 'text/plain;charset=UTF-8'
+  },
+  body: String(Date.now())
 });
 
 await writeFile(
@@ -154,10 +235,36 @@ await writeFile(
   'utf8'
 );
 
-await run('npx', ['-y', 'wrangler', 'pages', 'deploy', '.', '--project-name', project, '--branch', 'main', '--commit-dirty', 'true', '--no-bundle'], {
-  cwd: pagesDir,
-  env: envForWrangler
-});
+{
+  let lastErr;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      await run('npx', ['-y', 'wrangler@4.106.0', 'pages', 'deploy', '.', '--project-name', project, '--branch', 'main', '--commit-dirty', 'true', '--no-bundle'], {
+        cwd: pagesDir,
+        env: envForWrangler
+      });
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      const stderr = String(err?.stderr || '');
+      const isFetchFailed = /fetch failed/i.test(stderr) || /connectivity issue/i.test(stderr);
+      if (!isFetchFailed) throw err;
+
+      const m = stderr.match(/Logs were written to "([^"]+)"/);
+      const logPath = m ? m[1] : '';
+      if (logPath) {
+        try {
+          const logText = await readFile(logPath, 'utf8');
+          const tail = logText.split('\n').slice(-120).join('\n');
+          process.stdout.write(`wrangler_log_tail_attempt_${attempt}=${logPath}\n${tail}\n`);
+        } catch {}
+      }
+      await new Promise(r => setTimeout(r, 1500 * attempt));
+    }
+  }
+  if (lastErr) throw lastErr;
+}
 
 const base = `https://${project}.pages.dev/${uuid}`;
 const configUrl = `${base}/api/config`;
@@ -165,42 +272,56 @@ const preferredUrl = `${base}/api/preferred-ips`;
 const subUrl = `${base}/sub?target=clash`;
 
 await retry(async () => {
-  const r = await fetchText(configUrl);
+  const r = await fetchText(configUrl, { timeoutMs: 20000 });
   if (r.status >= 500) throw new Error(`config not ready: ${r.status}`);
   return r;
 }, { retries: 20, delayMs: 1500 });
 
-await fetchText(configUrl, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ae: 'yes', ena: 'no', epd: 'no', epi: 'yes', egi: 'no' })
-});
+await retry(async () => {
+  return await fetchText(configUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ae: 'yes', ena: 'no', epd: 'no', epi: 'yes', egi: 'no' }),
+    timeoutMs: 20000
+  });
+}, { retries: 6, delayMs: 1500 });
 
-await fetchText(preferredUrl, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify([{
-    ip: '1.1.1.1',
-    port: 443,
-    name: '🇸🇬新加坡-优选节点-11',
-    regionCode: 'SG',
-    country: '新加坡',
-    city: '新加坡',
-    sourceType: 'preferred'
-  }])
-});
+await retry(async () => {
+  return await fetchText(preferredUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([{
+      ip: '1.1.1.1',
+      port: 443,
+      name: '🇸🇬新加坡-优选节点-11',
+      regionCode: 'SG',
+      country: '新加坡',
+      city: '新加坡',
+      sourceType: 'preferred'
+    }]),
+    timeoutMs: 20000
+  });
+}, { retries: 6, delayMs: 1500 });
 
-const preferred = await fetchText(preferredUrl);
+const preferred = await retry(async () => {
+  return await fetchText(preferredUrl, { timeoutMs: 20000 });
+}, { retries: 6, delayMs: 1500 });
 if (!preferred.text.includes('🇸🇬新加坡-优选节点-11')) {
   throw new Error(`preferred-ips missing expected name. body=${preferred.text}`);
 }
 
-const sub = await fetchText(subUrl);
+const sub = await retry(async () => {
+  return await fetchText(subUrl, { timeoutMs: 20000 });
+}, { retries: 6, delayMs: 1500 });
 let decoded = '';
-try {
-  decoded = Buffer.from(sub.text.trim(), 'base64').toString('utf8');
-} catch {
+if (sub.contentType.includes('yaml') || sub.contentType.includes('text/plain')) {
   decoded = sub.text;
+} else {
+  try {
+    decoded = Buffer.from(sub.text.trim(), 'base64').toString('utf8');
+  } catch {
+    decoded = sub.text;
+  }
 }
 if (!decoded.includes('🇸🇬新加坡-优选节点-11')) {
   throw new Error('sub missing expected name');
@@ -214,13 +335,36 @@ process.stdout.write(`preferred=${preferredUrl}\n`);
 process.stdout.write(`sub=${subUrl}\n`);
 
 if (!keep) {
-  await run('npx', ['-y', 'wrangler', 'pages', 'project', 'delete', project, '--yes'], {
-    cwd: selfRoot,
-    env: envForWrangler
-  });
-  await run('npx', ['-y', 'wrangler', 'kv', 'namespace', 'delete', '--namespace-id', kvId, '--skip-confirmation'], {
-    cwd: selfRoot,
-    env: envForWrangler
-  });
+  process.stdout.write('cleanup=started\n');
+  try {
+    await cfApiWithRetry(`/accounts/${accountId}/pages/projects/${project}`, {
+      method: 'DELETE'
+    });
+  } catch {}
+  try {
+    await cfApiWithRetry(`/accounts/${accountId}/storage/kv/namespaces/${kvId}`, {
+      method: 'DELETE'
+    });
+  } catch {}
   await rm(workDir, { recursive: true, force: true });
+  process.stdout.write('cleanup=done\n');
+  process.stdout.write('note=links may become invalid after cleanup\n');
+} else {
+  process.stdout.write('cleanup=skipped\n');
+}
+
+if (emitJsonPath) {
+  const obj = buildDeployResult({
+    accountId,
+    deployType: 'pages',
+    project,
+    uuid,
+    workerDomain: `${project}.pages.dev`,
+    preferredUrl,
+    subUrl,
+    createdAt: new Date().toISOString(),
+    cleanup: keep ? 'skipped' : 'done'
+  });
+  await writeDeployResult(emitJsonPath, obj);
+  process.stdout.write(`deploy_result=${emitJsonPath}\n`);
 }
