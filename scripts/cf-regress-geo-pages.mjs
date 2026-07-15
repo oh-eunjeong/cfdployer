@@ -84,7 +84,8 @@ async function cfApi(path, options = {}) {
     ...options.headers
   };
   let body = options.body;
-  if (body && typeof body === 'object' && !(body instanceof Uint8Array) && !headers['Content-Type']) {
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (body && typeof body === 'object' && !(body instanceof Uint8Array) && !isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(body);
   }
@@ -152,6 +153,58 @@ async function cfApiWithRetry(path, options = {}) {
       throw err;
     }
   }, { retries, delayMs });
+}
+
+function buildServiceUrls(domain, uuid) {
+  const base = `https://${domain}/${uuid}`;
+  return {
+    domain,
+    base,
+    configUrl: `${base}/api/config`,
+    preferredUrl: `${base}/api/preferred-ips`,
+    subUrl: `${base}/sub?target=clash`
+  };
+}
+
+async function ensureWorkersDevEnabled(accountId, scriptName) {
+  try {
+    await cfApiWithRetry(`/accounts/${accountId}/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`, {
+      method: 'POST',
+      body: { enabled: true }
+    });
+  } catch {
+    await cfApiWithRetry(`/accounts/${accountId}/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`, {
+      method: 'PUT',
+      body: { enabled: true }
+    });
+  }
+}
+
+async function tryDeployWorkersMirror({ accountId, project, uuid, kvId, encodedPath }) {
+  const code = await readFile(encodedPath, 'utf8');
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({
+    main_module: 'worker.js',
+    compatibility_date: compatDate,
+    bindings: [
+      { type: 'plain_text', name: 'u', text: uuid },
+      { type: 'kv_namespace', name: 'C', namespace_id: kvId }
+    ]
+  })], { type: 'application/json' }), 'metadata.json');
+  form.append('worker.js', new Blob([code], { type: 'application/javascript+module' }), 'worker.js');
+
+  await cfApiWithRetry(`/accounts/${accountId}/workers/scripts/${encodeURIComponent(project)}`, {
+    method: 'PUT',
+    body: form
+  });
+  await ensureWorkersDevEnabled(accountId, project);
+
+  const subdomainResult = await cfApiWithRetry(`/accounts/${accountId}/workers/subdomain`);
+  const accountSubdomain = String(subdomainResult?.subdomain || '').trim();
+  if (!accountSubdomain) {
+    throw new Error('workers.dev subdomain is empty for this account');
+  }
+  return `${project}.${accountSubdomain}.workers.dev`;
 }
 
 const argv = process.argv.slice(2);
@@ -266,10 +319,32 @@ await writeFile(
   if (lastErr) throw lastErr;
 }
 
-const base = `https://${project}.pages.dev/${uuid}`;
-const configUrl = `${base}/api/config`;
-const preferredUrl = `${base}/api/preferred-ips`;
-const subUrl = `${base}/sub?target=clash`;
+const pagesService = buildServiceUrls(`${project}.pages.dev`, uuid);
+let workersDevDomain = '';
+let workersService = null;
+
+try {
+  workersDevDomain = await tryDeployWorkersMirror({
+    accountId,
+    project,
+    uuid,
+    kvId,
+    encodedPath
+  });
+  workersService = buildServiceUrls(workersDevDomain, uuid);
+  process.stdout.write(`workers_dev=${workersDevDomain}\n`);
+} catch (err) {
+  process.stdout.write(`workers_dev=unavailable:${String(err?.message || err)}\n`);
+}
+
+if (!workersService) {
+  throw new Error('workers.dev mirror deploy failed; pages.dev 已确认不适合作为当前 WS+VLESS 入口，停止生成 deploy_result.json');
+}
+
+const publicService = workersService;
+const configUrl = publicService.configUrl;
+const preferredUrl = publicService.preferredUrl;
+const subUrl = publicService.subUrl;
 
 await retry(async () => {
   const r = await fetchText(configUrl, { timeoutMs: 20000 });
@@ -342,6 +417,11 @@ if (!keep) {
     });
   } catch {}
   try {
+    await cfApiWithRetry(`/accounts/${accountId}/workers/scripts/${encodeURIComponent(project)}`, {
+      method: 'DELETE'
+    });
+  } catch {}
+  try {
     await cfApiWithRetry(`/accounts/${accountId}/storage/kv/namespaces/${kvId}`, {
       method: 'DELETE'
     });
@@ -356,12 +436,20 @@ if (!keep) {
 if (emitJsonPath) {
   const obj = buildDeployResult({
     accountId,
-    deployType: 'pages',
+    deployType: 'worker',
     project,
     uuid,
-    workerDomain: `${project}.pages.dev`,
+    workerDomain: publicService.domain,
+    apiDomain: publicService.domain,
+    probeDomain: publicService.domain,
+    pagesDomain: pagesService.domain,
+    workersDevDomain,
     preferredUrl,
     subUrl,
+    pagesPreferredUrl: pagesService.preferredUrl,
+    pagesSubUrl: pagesService.subUrl,
+    workersPreferredUrl: workersService?.preferredUrl || '',
+    workersSubUrl: workersService?.subUrl || '',
     createdAt: new Date().toISOString(),
     cleanup: keep ? 'skipped' : 'done'
   });

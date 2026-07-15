@@ -18,12 +18,20 @@ test('writeDeployResult writes JSON without secrets', async () => {
   const out = join(dir, 'deploy_result.json');
   const obj = buildDeployResult({
     accountId: 'acc',
-    deployType: 'pages',
+    deployType: 'worker',
     project: 'proj',
     uuid: 'uuid',
-    workerDomain: 'example.pages.dev',
+    workerDomain: 'example.workers.dev',
+    apiDomain: 'example.workers.dev',
+    probeDomain: 'example.workers.dev',
+    pagesDomain: 'example.pages.dev',
+    workersDevDomain: 'example.workers.dev',
     preferredUrl: 'https://example/pages/api/preferred-ips',
     subUrl: 'https://example/pages/sub',
+    pagesPreferredUrl: 'https://example.pages.dev/uuid/api/preferred-ips',
+    pagesSubUrl: 'https://example.pages.dev/uuid/sub?target=clash',
+    workersPreferredUrl: 'https://example.workers.dev/uuid/api/preferred-ips',
+    workersSubUrl: 'https://example.workers.dev/uuid/sub?target=clash',
     createdAt: '2026-07-03T00:00:00.000Z',
     cleanup: 'skipped'
   });
@@ -37,18 +45,27 @@ test('writeDeployResult writes JSON without secrets', async () => {
 test('buildDeployResult produces preferred/sub URLs consistent with workerDomain+uuid', () => {
   const obj = buildDeployResult({
     accountId: 'acc',
-    deployType: 'pages',
+    deployType: 'worker',
     project: 'proj',
     uuid: 'u',
-    workerDomain: 'proj.pages.dev',
-    preferredUrl: 'https://proj.pages.dev/u/api/preferred-ips',
-    subUrl: 'https://proj.pages.dev/u/sub?target=clash',
+    workerDomain: 'proj.example.workers.dev',
+    apiDomain: 'proj.example.workers.dev',
+    probeDomain: 'proj.example.workers.dev',
+    pagesDomain: 'proj.pages.dev',
+    workersDevDomain: 'proj.example.workers.dev',
+    preferredUrl: 'https://proj.example.workers.dev/u/api/preferred-ips',
+    subUrl: 'https://proj.example.workers.dev/u/sub?target=clash',
+    pagesPreferredUrl: 'https://proj.pages.dev/u/api/preferred-ips',
+    pagesSubUrl: 'https://proj.pages.dev/u/sub?target=clash',
+    workersPreferredUrl: 'https://proj.example.workers.dev/u/api/preferred-ips',
+    workersSubUrl: 'https://proj.example.workers.dev/u/sub?target=clash',
     createdAt: '2026-07-03T00:00:00.000Z',
     cleanup: 'skipped'
   });
-  assert.equal(obj.workerDomain, 'proj.pages.dev');
+  assert.equal(obj.workerDomain, 'proj.example.workers.dev');
+  assert.equal(obj.apiDomain, 'proj.example.workers.dev');
+  assert.equal(obj.probeDomain, 'proj.example.workers.dev');
   assert.equal(obj.uuid, 'u');
   assert.ok(obj.preferredUrl.includes('/u/api/preferred-ips'));
   assert.ok(obj.subUrl.includes('/u/sub'));
 });
-

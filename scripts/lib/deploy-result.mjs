@@ -21,8 +21,16 @@ export function buildDeployResult(input) {
     project: String(input.project || ''),
     uuid: String(input.uuid || ''),
     workerDomain: String(input.workerDomain || ''),
+    apiDomain: String(input.apiDomain || input.workerDomain || ''),
+    probeDomain: String(input.probeDomain || input.workerDomain || ''),
+    pagesDomain: String(input.pagesDomain || ''),
+    workersDevDomain: String(input.workersDevDomain || ''),
     preferredUrl: String(input.preferredUrl || ''),
     subUrl: String(input.subUrl || ''),
+    pagesPreferredUrl: String(input.pagesPreferredUrl || ''),
+    pagesSubUrl: String(input.pagesSubUrl || ''),
+    workersPreferredUrl: String(input.workersPreferredUrl || ''),
+    workersSubUrl: String(input.workersSubUrl || ''),
     createdAt: String(input.createdAt || ''),
     cleanup: String(input.cleanup || '')
   };
@@ -31,4 +39,3 @@ export function buildDeployResult(input) {
 export async function writeDeployResult(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf8');
 }
-

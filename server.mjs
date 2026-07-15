@@ -74,6 +74,9 @@ async function 部署(数据) {
   const 项目名 = 操作模式 === 'update' ? 原始项目名 : 清理项目名(原始项目名 || 生成随机名称('edge'));
   const 模式 = 数据.sourceMode === 'plain' ? 'plain' : 'encoded';
   const 部署方式 = 数据.deployType === 'worker' ? 'worker' : 'pages';
+  if (操作模式 !== 'update' && 部署方式 === 'pages') {
+    throw new Error('Pages 入口已禁用：pages.dev 无法满足当前 WS+VLESS 隧道链路，请改用 Worker 部署。');
+  }
   记录(`准备${操作模式 === 'update' ? '更新' : '部署'} ${部署方式 === 'pages' ? 'Pages' : 'Worker'}: ${项目名}`);
   记录(`部署源: ${模式 === 'plain' ? '明文源吗' : '少年你相信光吗'}，实时联网拉取`);
   if (操作模式 === 'update') {
@@ -140,12 +143,18 @@ async function 部署(数据) {
     deployType: 部署方式,
     projectName: 项目名
   }, 记录);
+  const workerDomain = 选择可用入口域名(部署方式, 项目名, domain, domains, !!数据.enableWorkersDev);
   记录('部署完成');
   return {
     deployType: 部署方式,
     projectName: 项目名,
     sourceMode: 模式,
     uuid,
+    workerDomain,
+    apiDomain: workerDomain,
+    probeDomain: workerDomain,
+    preferredUrl: workerDomain ? `https://${workerDomain}/${uuid}/api/preferred-ips` : '',
+    subUrl: workerDomain ? `https://${workerDomain}/${uuid}/sub?target=clash` : '',
     kv: { id: 命名空间.id, title: 命名空间.title || 数据.kvTitle || '' },
     domain,
     domains,
@@ -163,9 +172,10 @@ async function 补全部署默认值(数据) {
     输出.accountId = accounts[0].id;
     输出.accountName = accounts[0].name;
   }
-  if (!输出.deployType) 输出.deployType = 'pages';
+  if (!输出.deployType) 输出.deployType = 'worker';
   if (!输出.sourceMode) 输出.sourceMode = 'encoded';
   if (输出.deployMode === 'update') return 输出;
+  if (输出.enableWorkersDev === undefined) 输出.enableWorkersDev = true;
   if (输出.autoDomain && !输出.hostname) {
     zones = await 调用接口(输出.credentials, '/zones?status=active&per_page=100');
     if (zones.length) {
@@ -248,6 +258,15 @@ function 提取列表(result, warnings, label) {
   if (result.status === 'fulfilled') return Array.isArray(result.value) ? result.value : [];
   warnings.push(`${label} 列表读取失败: ${result.reason?.message || result.reason}`);
   return [];
+}
+
+function 选择可用入口域名(部署方式, 项目名, domain, domains, enableWorkersDev) {
+  if (domain?.hostname) return domain.hostname;
+  const 域名列表 = Array.isArray(domains) ? domains : [];
+  const 自定义域名 = 域名列表.find(项 => 项 && 项.hostname);
+  if (自定义域名?.hostname) return 自定义域名.hostname;
+  if (部署方式 === 'worker' && enableWorkersDev) return `${项目名}.workers.dev`;
+  return '';
 }
 
 function 校验部署参数(数据) {

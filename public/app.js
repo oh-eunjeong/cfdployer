@@ -150,6 +150,7 @@ async function runDeploy(collector) {
 
 function formatDeployResult(payload, result) {
   if (payload.deployMode === 'update') return `${result.projectName} 代码同步完成`;
+  if (result.workerDomain) return `https://${result.workerDomain}/${result.uuid}`;
   if (result.domain?.hostname) return `https://${result.domain.hostname}/${result.uuid}`;
   return `${result.projectName} 部署完成，UUID: ${result.uuid}`;
 }
@@ -187,14 +188,15 @@ function collectQuickPayload() {
     credentials: getCredentials(),
     accountId: $('accountId').value,
     deployMode: 'create',
-    deployType: 'pages',
+    deployType: 'worker',
     sourceMode: 'encoded',
     projectName: randomName('edge'),
     uuid: crypto.randomUUID(),
     kvTitle: randomName('store'),
     hostname,
     zoneId: shouldBindDomain ? selectedZone.id : '',
-    autoDomain: false
+    autoDomain: false,
+    enableWorkersDev: true
   };
 }
 
@@ -329,6 +331,8 @@ function setRandomNames() {
   $('kvId').value = '';
   $('existingProject').value = '';
   $('deployMode').value = 'create';
+  $('deployType').value = 'worker';
+  $('enableWorkersDev').checked = true;
   updateQuickDomainPreview();
   syncModeState();
 }
@@ -370,10 +374,11 @@ function matchZone(hostname) {
 function syncModeState() {
   const updating = $('deployMode').value === 'update';
   $('deploy').textContent = updating ? '更新部署' : '高级部署';
+  if (!updating) $('deployType').value = 'worker';
   $('modeHint').textContent = updating
-    ? '更新模式只同步代码，不创建 KV，不修改 UUID、KV 绑定、域名或 Pages 项目配置。'
-    : '新建模式会按表单配置随机 UUID、KV 和可选域名。';
-  for (const id of ['uuid', 'kvTitle', 'kvId', 'advancedHostname', 'zoneId', 'enableWorkersDev']) {
+    ? '更新模式只同步代码，不创建 KV，不修改 UUID、KV 绑定、域名或现有项目配置。'
+    : '新建模式固定部署到 Worker，Pages 入口已禁用。';
+  for (const id of ['uuid', 'kvTitle', 'kvId', 'advancedHostname', 'zoneId', 'enableWorkersDev', 'deployType']) {
     $(id).disabled = updating;
   }
   if ($('kvId').options[0]) $('kvId').options[0].textContent = updating ? '更新模式不修改 KV' : '新建随机 KV';
