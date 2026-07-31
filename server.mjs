@@ -261,11 +261,28 @@ function 提取列表(result, warnings, label) {
 }
 
 function 选择可用入口域名(部署方式, 项目名, domain, domains, enableWorkersDev) {
-  if (domain?.hostname) return domain.hostname;
+  if (domain?.hostname) {
+    if (domain.hostname.toLowerCase().endsWith('.pages.dev')) {
+      throw new Error('选择可用入口域名: .pages.dev 入口已被 ADR-001 排除 (WS+VLESS 协议层不兼容), 请改用 Worker + 自定义域');
+    }
+    return domain.hostname;
+  }
   const 域名列表 = Array.isArray(domains) ? domains : [];
   const 自定义域名 = 域名列表.find(项 => 项 && 项.hostname);
-  if (自定义域名?.hostname) return 自定义域名.hostname;
-  if (部署方式 === 'worker' && enableWorkersDev) return `${项目名}.workers.dev`;
+  if (自定义域名?.hostname) {
+    if (自定义域名.hostname.toLowerCase().endsWith('.pages.dev')) {
+      throw new Error('选择可用入口域名: 自定义域名列表含 .pages.dev, 已被 ADR-001 排除');
+    }
+    return 自定义域名.hostname;
+  }
+  if (部署方式 === 'worker' && enableWorkersDev) {
+    const wd = `${项目名}.workers.dev`;
+    // workers.dev 不以 .pages.dev 结尾, 但作为最后一道闸门: 若将来 CF 改 suffix, 也守得住
+    if (wd.toLowerCase().endsWith('.pages.dev')) {
+      throw new Error('选择可用入口域名: workers.dev 推导异常, 后缀被改成 .pages.dev');
+    }
+    return wd;
+  }
   return '';
 }
 

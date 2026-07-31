@@ -227,12 +227,26 @@ const envForWrangler = {
 
 const repoRoot = fileURLToPath(new URL('..', new URL('..', import.meta.url)));
 const cfnewDir = join(repoRoot, 'cfnew');
-const encodedPath = join(cfnewDir, '少年你相信光吗');
+const encodedPath = join(cfnewDir, '少年你相信光吗'); // ADR-002 (2026-07-16): obfuscated 是生产约束
 
 const workDir = await mkdtemp(join(tmpdir(), 'cfnew-geo-regress-'));
 const pagesDir = join(workDir, 'pages');
 await mkdir(pagesDir, { recursive: true });
 await copyFile(encodedPath, join(pagesDir, '_worker.js'));
+// ADR-002 (2026-07-16): obfuscated 是生产约束 (主公确认), deployer cp 必然是单行 obfuscated 版本
+// 若 cp 后是明文 (行数 > 100), 极可能是 cp 错文件 (比如误用 明文源吗), 立即拒绝
+{
+  const targetPath = join(pagesDir, '_worker.js');
+  const content = await readFile(targetPath, 'utf8');
+  const lineCount = content.split('\n').length;
+  if (lineCount > 100) {
+    throw new Error(
+      `ADR-002: cp 后的 _worker.js 行数=${lineCount}, > 100, 极可能是明文源而非 obfuscated. ` +
+      `本部署器契约要求使用 obfuscated 版本 (cfnew/少年你相信光吗), 请检查 encodedPath`
+    );
+  }
+  process.stdout.write(`obfuscated_assertion: line_count=${lineCount} (期望 < 100)\n`);
+}
 await writeFile(join(pagesDir, 'index.html'), '<!doctype html><meta charset="utf-8"><title>cfnew-geo-regress</title>', 'utf8');
 
 process.stdout.write(`account=${accountId}\n`);
@@ -319,6 +333,8 @@ await writeFile(
   if (lastErr) throw lastErr;
 }
 
+// ADR-001 (2026-07-16): pagesService 仅用于 schema 完整性 (pagesDomain/pagesPreferredUrl/pagesSubUrl 字段),
+// 不作为 public 入口。pages.dev 已被协议层 hard guard 排除 (cf-regress-geo-pages.mjs:341 + yx-tools 三侧拦截)。
 const pagesService = buildServiceUrls(`${project}.pages.dev`, uuid);
 let workersDevDomain = '';
 let workersService = null;
@@ -436,7 +452,7 @@ if (!keep) {
 if (emitJsonPath) {
   const obj = buildDeployResult({
     accountId,
-    deployType: 'worker',
+    deployType: 'worker', // ADR-001: 仅 worker, pages.dev 已 hard guard 排除
     project,
     uuid,
     workerDomain: publicService.domain,

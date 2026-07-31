@@ -69,3 +69,84 @@ test('buildDeployResult produces preferred/sub URLs consistent with workerDomain
   assert.ok(obj.preferredUrl.includes('/u/api/preferred-ips'));
   assert.ok(obj.subUrl.includes('/u/sub'));
 });
+
+// === ADR-001 reject path tests (2026-07-16) ===
+
+test('buildDeployResult rejects deployType=pages (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: 'pages',
+      workerDomain: 'proj.workers.dev',
+      uuid: 'u'
+    }),
+    /deployType must be one of worker/
+  );
+});
+
+test('buildDeployResult rejects deployType=empty (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: '',
+      workerDomain: 'proj.workers.dev',
+      uuid: 'u'
+    }),
+    /deployType must be one of worker/
+  );
+});
+
+test('buildDeployResult rejects workerDomain ending with .pages.dev (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: 'worker',
+      workerDomain: 'proj.pages.dev',
+      uuid: 'u'
+    }),
+    /workerDomain='proj.pages.dev' ends with \.pages\.dev/
+  );
+});
+
+test('buildDeployResult rejects apiDomain ending with .pages.dev (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: 'worker',
+      workerDomain: 'proj.workers.dev',
+      apiDomain: 'proj.pages.dev',
+      uuid: 'u'
+    }),
+    /apiDomain='proj.pages.dev' ends with \.pages\.dev/
+  );
+});
+
+test('buildDeployResult rejects probeDomain ending with .pages.dev (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: 'worker',
+      workerDomain: 'proj.workers.dev',
+      probeDomain: 'proj.pages.dev',
+      uuid: 'u'
+    }),
+    /probeDomain='proj.pages.dev' ends with \.pages\.dev/
+  );
+});
+
+test('buildDeployResult rejects case-insensitive .pages.dev suffix (ADR-001)', () => {
+  assert.throws(
+    () => buildDeployResult({
+      deployType: 'worker',
+      workerDomain: 'Proj.Pages.Dev',
+      uuid: 'u'
+    }),
+    /\.pages\.dev/
+  );
+});
+
+test('buildDeployResult accepts custom domain (ADR-001 happy path)', () => {
+  const obj = buildDeployResult({
+    deployType: 'worker',
+    workerDomain: 'cfnew-e2e.fudan.qzz.io',
+    uuid: 'u'
+  });
+  assert.equal(obj.workerDomain, 'cfnew-e2e.fudan.qzz.io');
+  assert.equal(obj.apiDomain, 'cfnew-e2e.fudan.qzz.io');
+  assert.equal(obj.probeDomain, 'cfnew-e2e.fudan.qzz.io');
+});
